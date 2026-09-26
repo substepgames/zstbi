@@ -101,18 +101,10 @@ pub const Image = struct {
             num_components = if (forced_num_components == 0) @as(u32, @intCast(ch)) else forced_num_components;
             width = @as(u32, @intCast(x));
             height = @as(u32, @intCast(y));
-            bytes_per_component = 2;
+            bytes_per_component = 4;
             bytes_per_row = width * num_components * bytes_per_component;
             is_hdr = true;
-
-            // Convert each component from f32 to f16.
-            var ptr_f16 = @as([*]f16, @ptrCast(ptr.?));
-            const num = width * height * num_components;
-            var i: u32 = 0;
-            while (i < num) : (i += 1) {
-                ptr_f16[i] = @as(f16, @floatCast(ptr.?[i]));
-            }
-            break :data @as([*]u8, @ptrCast(ptr_f16))[0 .. height * bytes_per_row];
+            break :data @as([*]u8, @ptrCast(ptr.?))[0 .. height * bytes_per_row];
         } else data: {
             var x: c_int = undefined;
             var y: c_int = undefined;
@@ -258,21 +250,34 @@ pub const Image = struct {
     pub fn resize(image: *const Image, new_width: u32, new_height: u32) Image {
         assert(mem_allocator != null);
 
-        // TODO: Add support for HDR images
         const new_bytes_per_row = new_width * image.num_components * image.bytes_per_component;
         const new_size = new_height * new_bytes_per_row;
         const new_data = @as([*]u8, @ptrCast(zstbiMalloc(new_size)));
-        stbir_resize_uint8(
-            image.data.ptr,
-            @as(c_int, @intCast(image.width)),
-            @as(c_int, @intCast(image.height)),
-            0,
-            new_data,
-            @as(c_int, @intCast(new_width)),
-            @as(c_int, @intCast(new_height)),
-            0,
-            @as(c_int, @intCast(image.num_components)),
-        );
+        if (image.bytes_per_component == 4) {
+            stbir_resize_float(
+                @as([*]f32, @ptrCast(@alignCast(image.data.ptr))),
+                @as(c_int, @intCast(image.width)),
+                @as(c_int, @intCast(image.height)),
+                0,
+                @as([*]f32, @ptrCast(@alignCast(new_data))),
+                @as(c_int, @intCast(new_width)),
+                @as(c_int, @intCast(new_height)),
+                0,
+                @as(c_int, @intCast(image.num_components)),
+            );
+        } else {
+            stbir_resize_uint8(
+                image.data.ptr,
+                @as(c_int, @intCast(image.width)),
+                @as(c_int, @intCast(image.height)),
+                0,
+                new_data,
+                @as(c_int, @intCast(new_width)),
+                @as(c_int, @intCast(new_height)),
+                0,
+                @as(c_int, @intCast(image.num_components)),
+            );
+        }
         return .{
             .data = new_data[0..new_size],
             .width = new_width,
@@ -517,6 +522,30 @@ extern fn stbir_resize_uint8(
     input_h: c_int,
     input_stride_in_bytes: c_int,
     output_pixels: [*]u8,
+    output_w: c_int,
+    output_h: c_int,
+    output_stride_in_bytes: c_int,
+    num_channels: c_int,
+) void;
+
+extern fn stbir_resize_uint16(
+    input_pixels: [*]const u8,
+    input_w: c_int,
+    input_h: c_int,
+    input_stride_in_bytes: c_int,
+    output_pixels: [*]u8,
+    output_w: c_int,
+    output_h: c_int,
+    output_stride_in_bytes: c_int,
+    num_channels: c_int,
+) void;
+
+extern fn stbir_resize_float(
+    input_pixels: [*]const f32,
+    input_w: c_int,
+    input_h: c_int,
+    input_stride_in_bytes: c_int,
+    output_pixels: [*]f32,
     output_w: c_int,
     output_h: c_int,
     output_stride_in_bytes: c_int,
